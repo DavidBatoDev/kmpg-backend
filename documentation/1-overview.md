@@ -4,7 +4,7 @@ We are building an **AI-powered academic planning assistant** for university stu
 
 Instead of acting like a simple chatbot or reminder tool, this agent will actively help students understand what they need to do, when they need to do it, and how to realistically manage their workload. The student can ask natural language requests such as *"Help me plan my week,"* *"What should I study today?"* or *"I have three deadlines next week, can you help me organize them?"* The Copilot Studio agent then calls a backend **Academic Context API** to fetch accurate, structured information and uses that information to propose, revise, and explain a study plan.
 
-The product is built with **Microsoft Copilot Studio as the agent and decision-maker**, **Python/FastAPI as the Academic Context API deployed on Google Cloud Run**, **Supabase Postgres with pgvector for structured and semantic academic data**, **Supabase Storage for uploaded files**, **OpenAI as a backend extraction/embedding utility (not a planner)**, and **Google Calendar integration** for scheduling approved study blocks.
+The product is built with **Microsoft Copilot Studio as the agent and decision-maker**, **Python/FastAPI as the Academic Context API deployed on Google Cloud Run**, **Supabase Postgres with pgvector for structured and semantic academic data**, **Supabase Storage for uploaded files**, **OpenAI as a backend extraction/embedding utility (not a planner)**, and **Calendar provider integration (Google Calendar or Outlook Calendar)** for scheduling approved study blocks.
 
 ---
 
@@ -30,7 +30,7 @@ For example, a student could upload a syllabus and say:
 
 > "Help me plan my week."
 
-Copilot asks the backend to extract academic items, fetches planning context (deadlines + busy calendar blocks + preferences), and then composes the plan itself. It explains its reasoning, asks for the student's approval, and only then asks the backend to create Google Calendar events.
+Copilot asks the backend to extract academic items, fetches planning context (deadlines + busy calendar blocks + preferences), and then composes the plan itself. It explains its reasoning, asks for the student's approval, and only then asks the backend to create calendar provider events.
 
 This means the agent is not just responding to questions. Copilot is actively orchestrating the student's academic workflow, while the backend serves accurate facts and executes approved actions.
 
@@ -71,13 +71,13 @@ The proposed solution is an AI agent inside **Microsoft Copilot Studio** connect
 
 **Copilot Studio is the brain.** It manages the conversation, interprets student requests, calls backend tools, decides what study plan to propose, writes the plan narrative, explains priorities, and revises plans conversationally.
 
-**The FastAPI backend is the data and tool layer.** It stores student data, processes academic documents, extracts deadlines, returns planning context, saves Copilot-created study plans, and executes approved Google Calendar actions. The backend does *not* propose study strategy, revise plans on its own, or generate motivational guidance.
+**The FastAPI backend is the data and tool layer.** It stores student data, processes academic documents, extracts deadlines, returns planning context, saves Copilot-created study plans, and executes approved calendar provider actions. The backend does *not* propose study strategy, revise plans on its own, or generate motivational guidance.
 
 Supabase stores the student profile, courses, uploaded documents, extracted academic items, saved study plans, study blocks, and calendar event references. Supabase Storage handles uploaded files. pgvector enables semantic search over academic documents.
 
 **OpenAI is used in the backend only as an extraction and embedding utility** — pulling structured facts out of messy syllabus text, generating embeddings for semantic search, and summarizing source document sections so Copilot has clean context to reason over. OpenAI in the backend never decides the study plan or advises the student.
 
-Google Calendar is integrated immediately so that approved study plans can become real calendar events.
+Calendar provider support is integrated immediately so that approved study plans can become real calendar events.
 
 ---
 
@@ -96,7 +96,7 @@ Supabase Postgres + Storage
 OpenAI in backend
 = Extraction/embedding utility (not a planner)
 
-Google Calendar
+Google Calendar or Outlook Calendar
 = External action system
 ```
 
@@ -128,12 +128,12 @@ Then Copilot Studio uses that information to say:
 # High-Level System Flow
 
 1. The student asks the Copilot Studio agent for help, e.g. *"Help me plan my week."*
-2. Copilot checks whether the system already has the student's courses, deadlines, availability, and academic documents. If something is missing, Copilot asks the student to upload a syllabus, paste deadlines, or connect Google Calendar.
+2. Copilot checks whether the system already has the student's courses, deadlines, availability, and academic documents. If something is missing, Copilot asks the student to upload a syllabus, paste deadlines, or connect a calendar provider (Google Calendar or Outlook Calendar).
 3. Once academic input is available, the backend processes the document, extracts factual academic items via OpenAI structured outputs, and stores them in Supabase.
 4. Copilot calls `GET /copilot/planning-context` to fetch the full picture: deadlines, busy calendar blocks, study preferences, prior study blocks, document context, and data warnings.
 5. **Copilot reasons over that context** and proposes a study plan in natural language. It explains the priorities itself — the backend did not score them.
 6. The student approves.
-7. Copilot calls `POST /copilot/study-plans/save` with the blocks it composed, then `POST /copilot/calendar/create-events` to push them to Google Calendar.
+7. Copilot calls `POST /copilot/study-plans/save` with the blocks it composed, then `POST /copilot/calendar/create-events` to push them to the selected calendar provider.
 8. If the student says *"I'm busy Wednesday"* or *"I missed yesterday's study block,"* Copilot revises the plan itself and calls `POST /copilot/study-plans/update` to persist the revision.
 
 ---
@@ -156,11 +156,11 @@ Copilot has:
 
 For the first version, we should focus on a strong vertical slice:
 
-**Upload syllabus → Extract academic items → Copilot fetches planning context → Copilot proposes plan → Student approves → Save plan → Create Google Calendar events.**
+**Upload syllabus → Extract academic items → Copilot fetches planning context → Copilot proposes plan → Student approves → Save plan → Create calendar provider events.**
 
 This MVP is enough to show the main value of the product. It proves that Copilot can turn academic documents into structured planning actions and create a real study schedule based on the student's workload — while the backend stays focused on clean data, extraction, persistence, and calendar execution.
 
-The MVP should include document upload/ingest, deadline extraction, student confirmation of low-confidence items, planning context retrieval, plan save, and Google Calendar event creation.
+The MVP should include document upload/ingest, deadline extraction, student confirmation of low-confidence items, planning context retrieval, plan save, and calendar provider event creation.
 
 We should avoid overbuilding too early. LMS integrations, advanced analytics, multi-agent architecture, and institution-level dashboards can come later.
 
@@ -170,10 +170,10 @@ We should avoid overbuilding too early. LMS integrations, advanced analytics, mu
 
 The project is successful if Copilot can help a student move from scattered academic information to a clear, calendar-ready study plan with minimal manual work — using only the structured facts the backend serves.
 
-A successful demo should show that Copilot can request academic inputs, ask the backend to extract them, request planning context, propose a realistic plan, explain its reasoning, ask for approval, and trigger Google Calendar event creation through the backend.
+A successful demo should show that Copilot can request academic inputs, ask the backend to extract them, request planning context, propose a realistic plan, explain its reasoning, ask for approval, and trigger calendar provider event creation through the backend.
 
 The strongest demo scenario:
 
-A student uploads a syllabus, Copilot asks the backend to extract several upcoming requirements, fetches planning context, notices three major deadlines in the same week, proposes an adjusted study plan with its own reasoning, and asks the backend to add the approved schedule to Google Calendar.
+A student uploads a syllabus, Copilot asks the backend to extract several upcoming requirements, fetches planning context, notices three major deadlines in the same week, proposes an adjusted study plan with its own reasoning, and asks the backend to add the approved schedule to the selected calendar provider.
 
 That directly answers the challenge: students do not just need another reminder tool. They need an adaptive academic assistant that helps them plan ahead before stress and conflicts become unmanageable — and the brain doing the adapting is Copilot Studio, served by a clean, accurate Academic Context API.

@@ -1,6 +1,6 @@
 # Conversation Scenarios — Student ↔ Copilot Studio Agent
 
-This document describes realistic end-to-end conversation flows between a university student and the Academic Planning Copilot Studio agent. Each scenario shows the natural-language turns, the backend tool calls Copilot makes, and the side effects on Supabase and Google Calendar.
+This document describes realistic end-to-end conversation flows between a university student and the Academic Planning Copilot Studio agent. Each scenario shows the natural-language turns, the backend tool calls Copilot makes, and the side effects on Supabase and the selected calendar provider.
 
 **Reminder:** Copilot Studio is the brain. The backend (`Academic Context API`) is a tool layer — it never decides strategy, never invents data, and never writes calendar events without explicit student approval.
 
@@ -15,7 +15,7 @@ getPlanningContext
 saveStudyPlan
 updateStudyPlan
 updateStudyBlockStatus
-createGoogleCalendarStudyEvents
+createCalendarStudyEvents
 syncCalendarBusyBlocks
 ```
 
@@ -26,9 +26,9 @@ Implementation guide for this flow in Copilot Studio:
 
 ## Scenario 1 — First-time planner without a connected calendar (the headline demo)
 
-**Student state:** brand-new `copilot_user_id`, no profile, no documents, no Google Calendar connection.
+**Student state:** brand-new `copilot_user_id`, no profile, no documents, no calendar provider connection.
 
-**Goal:** student says *"Help me plan my week"* and ends with real events on their Google Calendar.
+**Goal:** student says *"Help me plan my week"* and ends with real events on their selected calendar provider.
 
 ### Conversation
 
@@ -58,15 +58,15 @@ Student: Yes, end of day is fine.
 Copilot: [calls confirmAcademicItems with the quiz time confirmed]
          [calls getPlanningContext for June 10–18]
 
-         I notice your Google Calendar isn't connected yet, so I can't see
+         I notice your selected calendar provider is not connected yet, so I can't see
          when you're busy. Want to connect it? Here's the link:
-         https://academic-context-api-xxxx.a.run.app/calendar/oauth/start?copilot_user_id=user-123
+         https://academic-context-api-xxxx.a.run.app/calendar/oauth/start?provider=google&copilot_user_id=user-123
 
          Tell me when you're done and I'll continue planning.
 
 Student: Done.
 
-Copilot: [calls syncCalendarBusyBlocks for June 10–18]
+Copilot: [calls syncCalendarBusyBlocks for June 10-18 with provider="google"]
          [calls getPlanningContext again — now with busy blocks populated]
 
          Thanks. Here's what I'd suggest based on your deadlines and free time:
@@ -84,9 +84,9 @@ Copilot: [calls syncCalendarBusyBlocks for June 10–18]
 Student: Yes, add them.
 
 Copilot: [calls saveStudyPlan with status="approved" and the 6 blocks]
-         [calls createGoogleCalendarStudyEvents]
+         [calls createCalendarStudyEvents with provider="google"]
 
-         Done! 6 study blocks are on your Google Calendar. First one starts
+         Done! 6 study blocks are on your selected calendar provider. First one starts
          Wed at 7 PM: https://calendar.google.com/...
 ```
 
@@ -99,11 +99,11 @@ Copilot: [calls saveStudyPlan with status="approved" and the 6 blocks]
 4.  confirmAcademicItems               { items: [{ id, confirmed: true, due_date }] }
 5.  getPlanningContext                 (returns data_warnings: missing_calendar_connection)
                                        ↓ Copilot pauses for OAuth handoff
-6.  syncCalendarBusyBlocks             (after student confirms OAuth done)
+6.  syncCalendarBusyBlocks             (after student confirms OAuth done, with provider)
 7.  getPlanningContext                 (now with busy_blocks populated)
                                        ↓ Copilot reasons + composes blocks
 8.  saveStudyPlan                      { status: "approved", blocks: [...] }
-9.  createGoogleCalendarStudyEvents    { study_plan_id }
+9.  createCalendarStudyEvents          { study_plan_id, provider }
 ```
 
 ### What the backend does at each step
@@ -113,13 +113,13 @@ Copilot: [calls saveStudyPlan with status="approved" and the 6 blocks]
 2.  Creates course + documents row, stores source_text
 3.  Calls OpenAI structured extraction, saves academic_items
 4.  Updates academic_items.status = "confirmed"
-5.  Assembles context; emits data_warnings = ["missing_calendar_connection"]
+5.  Assembles context; emits data_warnings = ["missing_calendar_connection"] plus provider detail
 6.  Exchanges OAuth code earlier via /calendar/oauth/callback;
-    pulls Google events into calendar_busy_blocks
+    pulls provider events into calendar_busy_blocks
 7.  Re-assembles context, this time with busy_blocks populated
 8.  Inserts study_plans + study_blocks rows
-9.  Refuses if plan.status != "approved"; otherwise creates Google events,
-    saves google_calendar_event_id and calendar_html_link, marks plan "scheduled"
+9.  Refuses if plan.status != "approved"; otherwise creates provider events,
+    saves calendar_event_id and calendar_html_link, marks plan "scheduled"
 ```
 
 ### OAuth handoff detail
@@ -127,8 +127,8 @@ Copilot: [calls saveStudyPlan with status="approved" and the 6 blocks]
 When `getPlanningContext` returns `data_warnings` containing `missing_calendar_connection`, Copilot:
 
 1. Stops the planning flow.
-2. Constructs the URL `https://<api-host>/calendar/oauth/start?copilot_user_id=<id>`.
-3. Tells the student to open the link, complete Google consent, and come back.
+2. Asks calendar preference (Google Calendar or Outlook Calendar), then constructs `https://<api-host>/calendar/oauth/start?provider=<google|outlook>&copilot_user_id=<id>`.
+3. Tells the student to open the link, complete provider consent, and come back.
 4. Waits for a natural-language confirmation (e.g. *"done"*, *"connected"*).
 5. Resumes with `syncCalendarBusyBlocks` → `getPlanningContext`.
 
@@ -163,8 +163,8 @@ Copilot: [calls getPlanningContext for the current week]
 Student: Yes.
 
 Copilot: [calls updateStudyPlan with blocks_replace containing the full revised list]
-         [Optionally calls createGoogleCalendarStudyEvents again for the moved blocks
-          — or a future updateGoogleCalendarStudyEvents endpoint when added]
+         [Optionally calls createCalendarStudyEvents again for the moved blocks
+          — or a future updateCalendarStudyEvents endpoint when added]
 
          Updated. Your Thursday is now back-to-back project then quiz review.
 ```
@@ -185,7 +185,7 @@ Copilot: [calls updateStudyPlan with blocks_replace containing the full revised 
 
 ### Open question for the MVP
 
-The current spec does not include an `updateGoogleCalendarStudyEvents` endpoint. For MVP, the simplest behavior is: after `updateStudyPlan`, call `createGoogleCalendarStudyEvents` again — the backend should detect blocks that already have a `google_calendar_event_id` and update them in place rather than creating duplicates. If time-constrained, fall back to telling the student *"please remove the old Wednesday event manually — I've added the Thursday one."*
+The current spec does not include an `updateCalendarStudyEvents` endpoint. For MVP, the simplest behavior is: after `updateStudyPlan`, call `createCalendarStudyEvents` again — the backend should detect blocks that already have a provider event id field (for example `google_calendar_event_id` as a legacy name) and update them in place rather than creating duplicates. If time-constrained, fall back to telling the student *"please remove the old Wednesday event manually — I've added the Thursday one."*
 
 ---
 
@@ -211,7 +211,7 @@ Student: Yes.
 
 Copilot: [calls updateStudyBlockStatus { study_block_id, status: "missed" }]
          [calls updateStudyPlan with revised blocks including the new make-up block]
-         [calls createGoogleCalendarStudyEvents for the new block]
+         [calls createCalendarStudyEvents for the new block]
 
          Done. Marked yesterday as missed and added tonight 5–7 PM to catch up.
 ```
@@ -222,7 +222,7 @@ Copilot: [calls updateStudyBlockStatus { study_block_id, status: "missed" }]
 1.  getPlanningContext
 2.  updateStudyBlockStatus     { study_block_id, status: "missed" }
 3.  updateStudyPlan            (with the new make-up block added)
-4.  createGoogleCalendarStudyEvents
+4.  createCalendarStudyEvents
 ```
 
 ---
@@ -267,7 +267,7 @@ Copilot: [calls confirmAcademicItems:
                                 and clarifying_questions: [...])
 3.  confirmAcademicItems       (with student answers — confirmed or cancelled)
 4.  getPlanningContext
-5.  saveStudyPlan + createGoogleCalendarStudyEvents (continues like Scenario 1)
+5.  saveStudyPlan + createCalendarStudyEvents (continues like Scenario 1)
 ```
 
 ### Key rule
@@ -309,7 +309,7 @@ Copilot: [calls ingestAcademicText → extractAcademicItems → confirmAcademicI
 
 Student: Yes.
 
-Copilot: [calls saveStudyPlan + createGoogleCalendarStudyEvents]
+Copilot: [calls saveStudyPlan + createCalendarStudyEvents]
 ```
 
 ### Why this matters for the architecture
@@ -384,7 +384,7 @@ Copilot: [calls ingestAcademicText with the new text]
 Student: Yes.
 
 Copilot: [calls updateStudyPlan with the merged block list]
-         [calls createGoogleCalendarStudyEvents]
+         [calls createCalendarStudyEvents]
 ```
 
 ### Tool-call sequence
@@ -395,7 +395,7 @@ Copilot: [calls updateStudyPlan with the merged block list]
 3.  confirmAcademicItems (if needed)
 4.  getPlanningContext         (now includes the new academic_item)
 5.  updateStudyPlan            (revised blocks)
-6.  createGoogleCalendarStudyEvents
+6.  createCalendarStudyEvents
 ```
 
 ---
@@ -432,7 +432,7 @@ Copilot: [calls getPlanningContext — proceeds with the same data_warning]
 ### Key behavior
 
 - Copilot does **not** block the entire flow on a missing calendar connection. The `data_warnings` array is informational — Copilot can decide to proceed and disclose the limitation.
-- The backend still refuses `createGoogleCalendarStudyEvents` because there's no `calendar_connections` row. Copilot must tell the student the plan was saved but not pushed to Google.
+- The backend still refuses `createCalendarStudyEvents` because there's no `calendar_connections` row. Copilot must tell the student the plan was saved but not pushed to the selected provider.
 
 ---
 
@@ -466,6 +466,6 @@ For the 4-day competition build per [4-build_plan.md](4-build_plan.md):
 | 1. First-time planner + OAuth | **Required** — headline demo | Rehearsed verbatim on Day 4 |
 | 4. Low-confidence extraction | **High** — shows AI safety + clarifying questions | One-line stretch in the demo |
 | 5. Conflicting deadlines | **High** — shows Copilot reasoning, not backend logic | Can be the syllabus content in Scenario 1 |
-| 2. Revise plan | **Medium** — stretch goal | Drop if `updateGoogleCalendarStudyEvents` isn't ready |
+| 2. Revise plan | **Medium** — stretch goal | Drop if `updateCalendarStudyEvents` isn't ready |
 | 6. Context question | **Medium** — easy filler if time | Cheap to demo |
 | 3. Missed block, 7. New mid-week doc, 8. OAuth failure | **Low** — mention as capabilities, don't live-demo |

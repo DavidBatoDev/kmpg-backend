@@ -18,7 +18,7 @@ Use this with:
 Set these in Copilot Studio:
 
 - Title: `Academic Planning Assistant (Scenario 1 MVP)`
-- Description: `Helps first-time students turn pasted deadlines into an approved weekly study plan and optional Google Calendar events.`
+- Description: `Helps first-time students turn pasted deadlines into an approved weekly study plan and optional calendar events (Google Calendar or Outlook Calendar).`
 
 Scope lock for this MVP:
 
@@ -47,7 +47,7 @@ Non-negotiable rules:
 1. Never invent due dates or factual academic details.
 2. If extracted data is uncertain (low confidence, needs_confirmation=true, ambiguous dates), ask clarifying questions and confirm first.
 3. Separate "plan approval" from "calendar creation consent". Treat them as two distinct approvals.
-4. Never create Google Calendar events unless the plan is approved and the student explicitly says yes.
+4. Never create calendar events unless the plan is approved and the student explicitly says yes.
 5. If calendar data is unavailable or disconnected, disclose the limitation and continue with best available context.
 
 Tool-use policy:
@@ -55,7 +55,8 @@ Tool-use policy:
 2. Prefer getPlanningContext before giving final schedule recommendations.
 3. Use confirmAcademicItems when extraction uncertainty affects planning quality.
 4. Use saveStudyPlan only after explicit approval of concrete blocks.
-5. Use createGoogleCalendarStudyEvents only after saveStudyPlan(status="approved") and explicit calendar consent.
+5. Use createCalendarStudyEvents only after saveStudyPlan(status="approved") and explicit calendar consent.
+6. Before connect/sync/create calendar actions, ask the student which calendar provider to use: Google Calendar or Outlook Calendar.
 
 Default execution pattern (adapt by scenario):
 1. Intake: gather goal, timezone, course/deadline text, and constraints.
@@ -82,14 +83,14 @@ Expose only these actions in Copilot Studio:
 4. `confirmAcademicItems`
 5. `getPlanningContext`
 6. `saveStudyPlan`
-7. `createGoogleCalendarStudyEvents`
+7. `createCalendarStudyEvents`
 8. `syncCalendarBusyBlocks`
 
 Connector/security requirements:
 
 - Use API key header `x-copilot-api-key` for all `/copilot/*` routes.
 - Keep OAuth endpoints reachable from the deployed API host:
-  - `GET /calendar/oauth/start`
+  - `GET /calendar/oauth/start?provider=<google|outlook>&copilot_user_id=<id>`
   - `GET /calendar/oauth/callback`
 
 ## 4. Parameter Mapping Defaults
@@ -104,11 +105,15 @@ Apply these defaults consistently across tool calls:
 - Use student-provided value when available
 - Default to `Asia/Manila` when missing
 
-3. Planning window for `getPlanningContext` and `syncCalendarBusyBlocks`
+3. Calendar provider for calendar actions
+- Required for OAuth, sync, and create-events actions
+- Allowed values: `google`, `outlook`
+
+4. Planning window for `getPlanningContext` and `syncCalendarBusyBlocks`
 - Default: next 7 days
 - Alternative: fixed Scenario 1 demo window
 
-4. Course values for `ingestAcademicText`
+5. Course values for `ingestAcademicText`
 - If student provides course code/name, use it
 - If not, fallback `course_name = "General"` and keep `course_code` empty/null
 
@@ -129,21 +134,22 @@ Trigger condition:
 
 Flow:
 
-1. Tell student calendar is not connected.
-2. Provide link:
-   - `https://<api-host>/calendar/oauth/start?copilot_user_id=<session_user_id>`
-3. Ask student to reply `done` after consent.
-4. On `done` or `connected`:
-   - call `syncCalendarBusyBlocks`
+1. Ask student provider preference: Google Calendar or Outlook Calendar.
+2. Tell student selected provider calendar is not connected.
+3. Provide provider-specific link:
+   - `https://<api-host>/calendar/oauth/start?provider=<google|outlook>&copilot_user_id=<session_user_id>`
+4. Ask student to reply `done` after consent.
+5. On `done` or `connected`:
+   - call `syncCalendarBusyBlocks` with `provider`
    - call `getPlanningContext` again
-5. If sync fails:
-   - show retry message and same OAuth link
-   - offer fallback to proceed without busy blocks
+6. If sync fails:
+   - show retry message and same provider OAuth link
+   - offer provider switch or fallback to proceed without busy blocks
 
 Fallback message template:
 
 ```text
-I still cannot read your calendar connection. We can continue planning using your preferences only, but busy times may be missing. Would you like to continue now or retry calendar connect?
+I still cannot read your selected calendar provider connection. We can continue planning using your preferences only, but busy times may be missing. Would you like to retry this provider, switch provider, or continue without calendar sync?
 ```
 
 ### Topic B: Scenario 1 Approval Gate
@@ -167,14 +173,14 @@ Flow:
    - revise block proposal
    - loop back to approval
 4. On calendar consent `yes`:
-   - call `createGoogleCalendarStudyEvents`
+   - call `createCalendarStudyEvents` with `provider`
 5. On calendar consent `no`:
    - confirm plan was saved only
 
 Approval prompt template:
 
 ```text
-Do you approve this plan as your final weekly study schedule? If yes, I will save it first, then I can add it to Google Calendar if you want.
+Do you approve this plan as your final weekly study schedule? If yes, I will save it first, then I can add it to your selected calendar provider.
 ```
 
 ## 6. Tool Call Order for Scenario 1
@@ -186,10 +192,10 @@ Expected sequence for happy path:
 3. `extractAcademicItems`
 4. `confirmAcademicItems` (only if uncertainty exists)
 5. `getPlanningContext`
-6. `syncCalendarBusyBlocks` (after OAuth done)
+6. `syncCalendarBusyBlocks` (after OAuth done, with `provider`)
 7. `getPlanningContext` (refresh with busy blocks)
 8. `saveStudyPlan` (`status = "approved"`)
-9. `createGoogleCalendarStudyEvents` (only with explicit yes)
+9. `createCalendarStudyEvents` (only with explicit yes, with `provider`)
 
 ## 7. Conversation Starters for Demo
 

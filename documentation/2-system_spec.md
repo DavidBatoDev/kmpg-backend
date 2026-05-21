@@ -6,7 +6,7 @@ This backend is the **Academic Context API** that serves the Microsoft Copilot S
 
 **Copilot Studio is the brain.** It proposes study plans, revises them, explains priorities, and decides what to do conversationally.
 
-**This backend is the data and tool layer.** It stores student data, processes academic documents, extracts deadlines, returns planning context, saves Copilot-created study plans, and executes approved Google Calendar actions. The backend does **not** decide study strategy.
+**This backend is the data and tool layer.** It stores student data, processes academic documents, extracts deadlines, returns planning context, saves Copilot-created study plans, and executes approved calendar provider actions. The backend does **not** decide study strategy.
 
 The backend is built in VS Code using Python/FastAPI, deployed as a serverless service on Google Cloud Run, and connected to Microsoft Copilot Studio through REST API actions using an OpenAPI/Swagger specification.
 
@@ -37,7 +37,7 @@ AI Utility Layer (Extraction only — not a planner)
 - Embeddings for semantic search
 
 Calendar (External Action System)
-- Google Calendar API
+- Calendar provider APIs (Google Calendar + Outlook Calendar)
 - OAuth user connection
 ```
 
@@ -56,7 +56,7 @@ FastAPI Academic Context API     ← DATA + TOOLS
   ↓
 Supabase Postgres + pgvector + Supabase Storage
   ↓
-OpenAI API (extraction utility) + Google Calendar API (execution)
+OpenAI API (extraction utility) + calendar provider APIs (execution)
 ```
 
 ### Responsibility Split
@@ -69,7 +69,7 @@ OpenAI API (extraction utility) + Google Calendar API (execution)
 | Supabase Storage          | Syllabi, assignment briefs, uploaded files                                                                                       |
 | pgvector                  | Semantic search over document chunks                                                                                             |
 | OpenAI                    | Structured extraction from documents, embeddings, optional document summarization for Copilot context                            |
-| Google Calendar           | Availability sync and creation of approved study events                                                                          |
+| Calendar providers (Google/Outlook) | Availability sync and creation of approved study events                                                                |
 
 ### What the backend does NOT do
 
@@ -105,7 +105,7 @@ The first working version should prove this flow:
 10. Copilot composes a study plan and explains it to the student.
 11. Student approves.
 12. Copilot calls POST /copilot/study-plans/save with the blocks it composed.
-13. Copilot calls POST /copilot/calendar/create-events to push to Google Calendar.
+13. Copilot calls POST /copilot/calendar/create-events to push to the selected calendar provider.
 14. Student later says: "I'm busy Wednesday."
 15. Copilot composes the revision and calls POST /copilot/study-plans/update.
 ```
@@ -113,7 +113,7 @@ The first working version should prove this flow:
 ### Build the vertical slice first
 
 ```text
-Ingest text → Extract items → Return planning context → Save Copilot plan → Create Google Calendar events
+Ingest text → Extract items → Return planning context → Save Copilot plan → Create calendar provider events
 ```
 
 Do not start with every feature. Build this slice end-to-end first.
@@ -193,7 +193,7 @@ academic-planner-api/
 │  │  ├─ embedding_service.py    ← OpenAI embeddings (utility)
 │  │  ├─ planning_context_service.py  ← assembles context for Copilot
 │  │  ├─ study_plan_service.py   ← saves Copilot-created plans, no AI logic
-│  │  ├─ calendar_service.py     ← Google Calendar OAuth + event creation
+│  │  ├─ calendar_service.py     ← provider OAuth (Google/Outlook) + event creation
 │  │  └─ storage_service.py
 │  │
 │  └─ utils/
@@ -647,7 +647,7 @@ Response:
     },
     {
       "type": "missing_calendar_connection",
-      "message": "Google Calendar is not connected, so busy blocks may be incomplete."
+      "message": "Selected calendar provider is not connected, so busy blocks may be incomplete."
     }
   ]
 }
@@ -774,9 +774,9 @@ Response:
 
 ---
 
-### 13.9 Create Google Calendar events
+### 13.9 Create calendar provider events
 
-After the student approves and Copilot has saved the plan, Copilot asks the backend to push approved blocks to Google Calendar.
+After the student approves and Copilot has saved the plan, Copilot asks the backend to push approved blocks to the selected calendar provider.
 
 ```http
 POST /copilot/calendar/create-events
@@ -787,7 +787,8 @@ Request:
 ```json
 {
   "copilot_user_id": "user-123",
-  "study_plan_id": "uuid"
+  "study_plan_id": "uuid",
+  "provider": "google"
 }
 ```
 
@@ -798,11 +799,11 @@ Response:
   "created_events": [
     {
       "study_block_id": "uuid",
-      "google_calendar_event_id": "event-id",
-      "html_link": "https://calendar.google.com/..."
+      "calendar_event_id": "event-id",
+      "html_link": "https://calendar-provider.example/..."
     }
   ],
-  "message": "Study events were added to Google Calendar."
+  "message": "Study events were added to the selected calendar provider."
 }
 ```
 
@@ -810,7 +811,7 @@ Response:
 
 ### 13.10 Sync calendar busy blocks (optional helper)
 
-Pull busy events from Google Calendar into `calendar_busy_blocks` so `/planning-context` can include them.
+Pull busy events from the selected calendar provider into `calendar_busy_blocks` so `/planning-context` can include them.
 
 ```http
 POST /copilot/calendar/sync-busy
@@ -822,7 +823,8 @@ Request:
 {
   "copilot_user_id": "user-123",
   "start_date": "2026-06-10",
-  "end_date": "2026-06-17"
+  "end_date": "2026-06-17",
+  "provider": "google"
 }
 ```
 
@@ -1210,23 +1212,24 @@ The backend's job for `/planning-context` is **assembly, not reasoning**. It col
 
 ---
 
-## 19. Google Calendar Integration
+## 19. Calendar Provider Integration (Google + Outlook)
 
 ### OAuth flow
 
 ```http
-GET /calendar/oauth/start?copilot_user_id=user-123
+GET /calendar/oauth/start?provider=google&copilot_user_id=user-123
 GET /calendar/oauth/callback
 ```
 
-`/calendar/oauth/start` redirects the student to Google consent.
+`/calendar/oauth/start` redirects the student to provider consent.
 
 `/calendar/oauth/callback` receives the authorization code, exchanges it for tokens, encrypts the tokens, and stores them in `calendar_connections`.
 
-### Required Google OAuth scope
+### Required OAuth scopes (by provider)
 
 ```text
-https://www.googleapis.com/auth/calendar
+google: https://www.googleapis.com/auth/calendar
+outlook: Calendars.ReadWrite
 ```
 
 ### Calendar event format
@@ -1252,7 +1255,7 @@ Only create calendar events after the student approves the plan and Copilot has 
 
 ---
 
-## 20. Google Calendar Service Skeleton
+## 20. Calendar Provider Service Skeleton
 
 ### `app/services/calendar_service.py`
 
@@ -1409,7 +1412,7 @@ getPlanningContext
 saveStudyPlan
 updateStudyPlan
 updateStudyBlockStatus
-createGoogleCalendarStudyEvents
+createCalendarStudyEvents
 syncCalendarBusyBlocks
 ```
 
@@ -1454,11 +1457,11 @@ Use when revising a saved plan (e.g., student says they are busy on a specific d
 updateStudyBlockStatus:
 Use when the student says they completed or missed a specific study block.
 
-createGoogleCalendarStudyEvents:
-Use ONLY after the student approves the plan and explicitly agrees to add blocks to Google Calendar.
+createCalendarStudyEvents:
+Use ONLY after the student approves the plan and explicitly agrees to add blocks to the selected calendar provider.
 
 syncCalendarBusyBlocks:
-Use to refresh Google Calendar busy data before calling getPlanningContext if availability may have changed.
+Use to refresh selected provider busy data before calling getPlanningContext if availability may have changed.
 ```
 
 ---
@@ -1483,8 +1486,8 @@ You have a backend "Academic Context API" with tools to:
 - save a study plan you have composed
 - update a saved study plan
 - update a study block's status
-- create Google Calendar events from approved plans
-- sync Google Calendar busy blocks
+- create calendar provider events from approved plans
+- sync calendar provider busy blocks
 
 The backend serves facts and persists your decisions. It does NOT decide priorities, detect conflicts, or write the plan. You do that.
 
@@ -1499,7 +1502,7 @@ When a student asks for planning help:
 7. Reason about prioritization: what is heaviest, what is due soonest, where are the conflicts, how should the week be shaped. Explain this to the student in plain language.
 8. Propose a concrete plan (specific study blocks with times) and ask for approval.
 9. Once approved, call saveStudyPlan with status="approved" and the blocks you composed.
-10. Ask the student if you should add the blocks to Google Calendar. If yes, call createGoogleCalendarStudyEvents.
+10. Ask the student if you should add the blocks to the selected calendar provider. If yes, call createCalendarStudyEvents.
 11. If the student later says their availability changed or they missed a block, compose the revised blocks yourself and call updateStudyPlan. For single completed/missed blocks, call updateStudyBlockStatus.
 
 Always prioritize accuracy, clarity, and student wellbeing. If extracted information is uncertain, confirm before using it. Never invent due dates.
@@ -1615,7 +1618,7 @@ curl -X POST http://localhost:8000/copilot/study-plans/save \
 - Status flow: draft → approved
 ```
 
-### Step 7: Google Calendar OAuth
+### Step 7: Calendar provider OAuth
 
 ```text
 - OAuth start endpoint
@@ -1624,11 +1627,11 @@ curl -X POST http://localhost:8000/copilot/study-plans/save \
 - Calendar connection storage
 ```
 
-### Step 8: Google Calendar event creation
+### Step 8: calendar provider event creation
 
 ```text
 - Create events only from approved plans
-- Save google_calendar_event_id on study_blocks
+- Save provider event id on study_blocks (`google_calendar_event_id` legacy field name or `calendar_event_id` if migrated)
 - Optional: sync-busy endpoint
 ```
 
@@ -1675,10 +1678,10 @@ Approved. Add to my calendar.
 
 Copilot calls:
 - saveStudyPlan (status="approved", with the blocks Copilot composed)
-- createGoogleCalendarStudyEvents
+- createCalendarStudyEvents
 
 Copilot:
-Done. I added your study blocks to Google Calendar.
+Done. I added your study blocks to the selected calendar provider.
 
 Student:
 I'm busy Wednesday night.
@@ -1723,7 +1726,7 @@ Start coding in this order:
 6. /copilot/academic-items/confirm
 7. /copilot/planning-context
 8. /copilot/study-plans/save and /copilot/study-plans/update
-9. Google Calendar OAuth + /copilot/calendar/create-events
+9. Calendar provider OAuth + /copilot/calendar/create-events
 ```
 
 Then connect to Copilot Studio.

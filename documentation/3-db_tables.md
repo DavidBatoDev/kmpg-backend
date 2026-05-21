@@ -16,8 +16,8 @@ The database supports:
 - Extracted academic requirements (facts only)
 - Study plans composed by Copilot
 - Study blocks composed by Copilot
-- Google Calendar connection records
-- Calendar busy blocks (cached from Google)
+- calendar provider connection records (Google Calendar or Outlook Calendar)
+- Calendar busy blocks (cached from selected provider)
 - OAuth state handling
 - Copilot action audit logs
 ```
@@ -98,6 +98,9 @@ supabase db pull
 
 Recommended rule: SQL migrations are the source of truth. Avoid manual remote schema changes.
 
+Migration note for multi-provider support:
+- Relax provider checks from `provider in ('google')` to `provider in ('google', 'outlook')` for `calendar_connections`, `calendar_busy_blocks`, and `oauth_states`.
+
 ### 2.9 Generate schema diff migration
 
 ```bash
@@ -111,7 +114,7 @@ supabase db diff -f migration_name
 ```text
 1. Every student-specific table must include student_id.
 2. External user identity comes from copilot_user_id.
-3. Do not store raw Google OAuth tokens. Store encrypted tokens only.
+3. Do not store raw OAuth tokens from any provider. Store encrypted tokens only.
 4. Uploaded files live in Supabase Storage, not directly in Postgres.
 5. Document text can be stored in documents.source_text for MVP.
 6. Long document text is chunked into document_chunks.
@@ -346,7 +349,7 @@ create index if not exists idx_academic_items_status on public.academic_items (s
 create table if not exists public.calendar_connections (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references public.students(id) on delete cascade,
-  provider text not null default 'google' check (provider in ('google')),
+  provider text not null default 'google' check (provider in ('google', 'outlook')),
   calendar_id text not null default 'primary',
   encrypted_access_token text,
   encrypted_refresh_token text,
@@ -376,7 +379,7 @@ create index if not exists idx_calendar_connections_student_id on public.calenda
 create table if not exists public.calendar_busy_blocks (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references public.students(id) on delete cascade,
-  provider text not null default 'google' check (provider in ('google')),
+  provider text not null default 'google' check (provider in ('google', 'outlook')),
   external_event_id text,
   title text,
   start_time timestamptz not null,
@@ -465,7 +468,7 @@ create index if not exists idx_study_blocks_status on public.study_blocks (statu
 create table if not exists public.oauth_states (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references public.students(id) on delete cascade,
-  provider text not null default 'google' check (provider in ('google')),
+  provider text not null default 'google' check (provider in ('google', 'outlook')),
   state text unique not null,
   redirect_after_connect text,
   expires_at timestamptz not null,
@@ -672,40 +675,40 @@ Stores extracted academic requirements **as facts**. No priority column.
 
 ### 6.6 `calendar_connections`
 
-Stores encrypted Google Calendar OAuth tokens.
+Stores encrypted calendar provider OAuth tokens.
 
 | Column                    | Type        | Purpose                         |
 | ------------------------- | ----------- | ------------------------------- |
 | `student_id`              | uuid        | Owner student                   |
-| `provider`                | text        | google                          |
+| `provider`                | text        | google or outlook               |
 | `calendar_id`             | text        | Usually primary                 |
-| `encrypted_access_token`  | text        | Encrypted Google access token   |
-| `encrypted_refresh_token` | text        | Encrypted Google refresh token  |
+| `encrypted_access_token`  | text        | Encrypted provider access token   |
+| `encrypted_refresh_token` | text        | Encrypted provider refresh token  |
 | `token_expiry`            | timestamptz | Token expiration                |
 | `scopes`                  | text[]      | Granted OAuth scopes            |
 | `connection_status`       | text        | active, revoked, expired, error |
 | `last_busy_sync_at`       | timestamptz | When busy blocks were last refreshed |
 
-Never store raw Google tokens. Encrypt before saving.
+Never store raw provider tokens. Encrypt before saving.
 
 ### 6.7 `calendar_busy_blocks`
 
-Cached busy blocks from Google Calendar so `/planning-context` can return them without a live API call every time.
+Cached busy blocks from the selected calendar provider so `/planning-context` can return them without a live API call every time.
 
 | Column              | Type        | Purpose                  |
 | ------------------- | ----------- | ------------------------ |
-| `external_event_id` | text        | Google event ID          |
+| `external_event_id` | text        | Provider event ID        |
 | `title`             | text        | Event title              |
 | `start_time`        | timestamptz | Event start              |
 | `end_time`          | timestamptz | Event end                |
 | `is_all_day`        | boolean     | All-day flag             |
-| `source`            | text        | google_calendar          |
+| `source`            | text        | provider-specific source |
 
 Sync behavior for MVP:
 
 ```text
 1. Copilot calls /copilot/calendar/sync-busy with a date window (or backend does it lazily inside /planning-context if last_busy_sync_at is stale).
-2. Backend fetches Google events for the window.
+2. Backend fetches provider events for the window.
 3. Backend upserts them into calendar_busy_blocks.
 4. /planning-context returns the cached rows.
 ```
@@ -748,8 +751,8 @@ Stores individual study sessions composed by Copilot.
 | `end_time`                 | timestamptz | Block end                                                                |
 | `duration_minutes`         | int         | Generated                                                                |
 | `status`                   | text        | proposed, approved, scheduled, completed, missed, cancelled, rescheduled |
-| `google_calendar_event_id` | text        | Created event ID                                                         |
-| `calendar_html_link`       | text        | Google Calendar link                                                     |
+| `google_calendar_event_id` | text        | Created provider event ID (legacy field name)                            |
+| `calendar_html_link`       | text        | Calendar provider link                                                   |
 
 Status flow:
 
@@ -761,12 +764,12 @@ proposed → approved → scheduled → completed
 
 ### 6.10 `oauth_states`
 
-Stores temporary state records for Google OAuth.
+Stores temporary state records for calendar provider OAuth.
 
 | Column                   | Type        | Purpose                            |
 | ------------------------ | ----------- | ---------------------------------- |
-| `student_id`             | uuid        | Student connecting Google Calendar |
-| `provider`               | text        | google                             |
+| `student_id`             | uuid        | Student connecting selected calendar provider |
+| `provider`               | text        | google or outlook                 |
 | `state`                  | text        | Random secure OAuth state          |
 | `redirect_after_connect` | text        | Optional return URL                |
 | `expires_at`             | timestamptz | Expiration time (10–15 min)        |
@@ -998,8 +1001,8 @@ The backend converts this row set into the `data_warnings` array. It does **not*
 4. Student approves.
 5. Copilot calls /copilot/study-plans/save with status="approved" and its composed blocks.
 6. Copilot calls /copilot/calendar/create-events.
-7. Backend creates Google Calendar events.
-8. Backend marks plan + blocks as scheduled and saves google_calendar_event_id.
+7. Backend creates calendar provider events.
+8. Backend marks plan + blocks as scheduled and saves the provider event id (`google_calendar_event_id`, legacy name).
 9. Later: Copilot calls /copilot/study-plans/update or /copilot/study-blocks/status as the student's situation changes.
 ```
 
@@ -1077,7 +1080,7 @@ Then add:
 
 ```text
 1. Do not store API keys in the database.
-2. Do not store raw Google OAuth tokens.
+2. Do not store raw OAuth tokens from any provider.
 3. Do not allow public access to academic documents.
 4. Do not create calendar events from draft (non-approved) study plans.
 5. Do not trust Copilot-provided IDs without resolving them to student_id.

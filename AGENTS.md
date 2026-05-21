@@ -13,10 +13,10 @@ This file is the **agent spec** for Cursor Composer and other coding agents work
 | Layer | Role |
 |-------|------|
 | **Microsoft Copilot Studio** | Brain: conversation, study plans, priorities, conflict reasoning, student-facing advice |
-| **This API (FastAPI)** | Data + tools: storage, extraction, planning context, persist Copilot plans, Google Calendar execution |
+| **This API (FastAPI)** | Data + tools: storage, extraction, planning context, persist Copilot plans, calendar provider execution (Google Calendar or Outlook Calendar) |
 | **Supabase** | Postgres + pgvector + Storage (source of truth) |
 | **OpenAI (backend only)** | Structured extraction + embeddings — **not** a planner |
-| **Google Calendar** | OAuth + create study events after student approval |
+| **Calendar Providers** | OAuth + create study events after student approval (Google Calendar or Outlook Calendar) |
 
 **Product rule:** This is a **study planning** assistant, not an assignment-writing tool. Do not implement features that complete coursework for students.
 
@@ -36,9 +36,9 @@ This file is the **agent spec** for Cursor Composer and other coding agents work
 
 4. **Never invent due dates.** If unclear: `due_date = null`, `needs_confirmation = true`, low `confidence_score`, add `clarifying_questions`.
 
-5. **Calendar events only after approval:** Refuse `POST /copilot/calendar/create-events` unless the study plan `status` is `approved`.
+5. **Calendar events only after approval:** Refuse `POST /copilot/calendar/create-events` unless the study plan `status` is `approved`, regardless of provider (`google` or `outlook`).
 
-6. **Secrets:** Never commit `.env`. Never expose Supabase service role key, OpenAI key, or Google client secret to clients or Copilot.
+6. **Secrets:** Never commit `.env`. Never expose Supabase service role key, OpenAI key, Google client secret, or Outlook/Microsoft client secret to clients or Copilot.
 
 7. **OpenAI in backend:** Extraction and embeddings only. System prompts must say: extract facts, do not recommend strategy.
 
@@ -51,7 +51,7 @@ This file is the **agent spec** for Cursor Composer and other coding agents work
 ```text
 Paste syllabus text → ingest → extract academic items → confirm if needed
 → GET planning-context → [Copilot proposes plan] → save study plan (approved)
-→ create Google Calendar events
+→ create calendar provider events
 ```
 
 **Defer unless time:** file upload/PDF parsing, embeddings/`document_context`, plan-revise demo, per-block status, multi-student polish.
@@ -113,9 +113,9 @@ All `/copilot/*` routes require header: `x-copilot-api-key`.
 | POST | `/copilot/study-plans/save` | Persist Copilot-composed blocks (`draft` \| `approved`) |
 | POST | `/copilot/study-plans/update` | Replace blocks when Copilot revises |
 | POST | `/copilot/study-blocks/status` | completed / missed / etc. (stretch) |
-| POST | `/copilot/calendar/create-events` | Google events for **approved** plan only |
+| POST | `/copilot/calendar/create-events` | provider events for **approved** plan only |
 | POST | `/copilot/calendar/sync-busy` | Cache busy blocks |
-| GET | `/calendar/oauth/start` | OAuth redirect (not under `/copilot`) |
+| GET | `/calendar/oauth/start` | OAuth redirect (not under `/copilot`), provider-aware via `provider` query |
 | GET | `/calendar/oauth/callback` | Token exchange + encrypted storage |
 | GET | `/health` | Liveness |
 
@@ -143,7 +143,7 @@ Request/response examples and Pydantic models: [`documentation/2-system_spec.md`
 - Migrations are source of truth; use `supabase migration` / `supabase db push`
 - Backend uses **service role** only (Copilot never talks to Supabase directly)
 - Key tables: `students`, `courses`, `documents`, `document_chunks`, `academic_items`, `study_plans`, `study_blocks`, `calendar_connections`, `calendar_busy_blocks`, `oauth_states`, `agent_action_logs`
-- Encrypt Google tokens (Fernet); log actions in `agent_action_logs` without secrets
+- Encrypt provider tokens (Fernet); log actions in `agent_action_logs` without secrets
 
 ---
 
@@ -157,7 +157,7 @@ When adding code, follow this sequence unless the user asks otherwise:
 4. OpenAI extraction + `/copilot/academic-items/extract` + `/confirm`  
 5. `/copilot/planning-context` (assembly only)  
 6. `/copilot/study-plans/save` and `/update`  
-7. Google OAuth + `/copilot/calendar/create-events` (+ optional `sync-busy`)  
+7. Provider OAuth (Google/Outlook) + `/copilot/calendar/create-events` (+ optional `sync-busy`)  
 8. OpenAPI → Swagger 2.0 for Copilot Studio custom connector  
 
 4-day schedule: [`documentation/4-build_plan.md`](documentation/4-build_plan.md).
@@ -172,6 +172,7 @@ Copy `.env.example` → `.env`. Required keys (see spec for full list):
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`
 - `OPENAI_API_KEY`, `OPENAI_MODEL`, embedding settings
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `OUTLOOK_CLIENT_ID`, `OUTLOOK_CLIENT_SECRET`, `OUTLOOK_REDIRECT_URI` (when Outlook is enabled)
 - `TOKEN_ENCRYPTION_KEY` (Fernet)
 
 ---
@@ -197,6 +198,8 @@ curl http://localhost:8000/openapi.json -o openapi.json
 ```
 
 Default timezone for dates: **`Asia/Manila`** unless student profile overrides.
+
+Calendar mode: Copilot must ask provider preference first (`google` or `outlook`) before connect/sync/create calls.
 
 ---
 
@@ -226,7 +229,7 @@ Full schema: [`documentation/2-system_spec.md`](documentation/2-system_spec.md) 
 
 - Import Swagger 2.0 from `/openapi.json`
 - Security: API key header `x-copilot-api-key`
-- Tool names: `upsertStudentProfile`, `ingestAcademicText`, `extractAcademicItems`, `confirmAcademicItems`, `getPlanningContext`, `saveStudyPlan`, `updateStudyPlan`, `createGoogleCalendarStudyEvents`, `syncCalendarBusyBlocks`
+- Tool names: `upsertStudentProfile`, `ingestAcademicText`, `extractAcademicItems`, `confirmAcademicItems`, `getPlanningContext`, `saveStudyPlan`, `updateStudyPlan`, `createCalendarStudyEvents`, `syncCalendarBusyBlocks`
 - Agent instructions draft: [`documentation/2-system_spec.md`](documentation/2-system_spec.md) §26
 
 Agents working **only on backend** should not change Copilot prompts unless asked; reference §26 when documenting expected agent behavior.
@@ -261,6 +264,6 @@ Agents working **only on backend** should not change Copilot prompts unless aske
 | Extract due dates/weights from documents | Backend + OpenAI |
 | Store profile, items, plans, blocks | Backend + Supabase |
 | Whether workload is “too much” | Copilot (from planning context) |
-| Create Google Calendar events | Backend (after Copilot + student approval) |
+| Create calendar provider events | Backend (after Copilot + student approval) |
 
 When in doubt: **if it requires judgment or natural language for the student, it belongs in Copilot, not here.**
