@@ -19,6 +19,9 @@ createGoogleCalendarStudyEvents
 syncCalendarBusyBlocks
 ```
 
+Implementation guide for this flow in Copilot Studio:
+[6-copilot-studio-scenario1-setup.md](6-copilot-studio-scenario1-setup.md)
+
 ---
 
 ## Scenario 1 — First-time planner without a connected calendar (the headline demo)
