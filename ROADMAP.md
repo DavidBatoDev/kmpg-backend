@@ -29,7 +29,7 @@ app/services/  → Business logic
 app/db/        → Supabase client
 app/core/      → config, API key auth
 app/utils/     → time, text chunking
-supabase/migrations/ → SQL (to add)
+supabase/migrations/ → SQL ✅ (apply with db push / db reset)
 ```
 
 **Request flow:** `api` → `service` → Supabase (+ OpenAI / Google in services).
@@ -68,13 +68,16 @@ uvicorn app.main:app --reload --port 8000
 
 | Task | Status | Owner / files |
 |------|--------|----------------|
-| `supabase init` + migration from [documentation/3-db_tables.md](documentation/3-db_tables.md) §5 | ⬜ | `supabase/migrations/` |
+| `supabase init` + migration from [documentation/3-db_tables.md](documentation/3-db_tables.md) §5 | ✅ | `supabase/migrations/20260521120000_init_academic_context_schema.sql` |
+| Setup guide + MCP | ✅ | [documentation/7-supabase-setup-and-mcp.md](documentation/7-supabase-setup-and-mcp.md) |
 | Link hosted project + `supabase db push` | ⬜ | |
-| Configure `.env` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) | ⬜ | |
+| Apply migrations to hosted Supabase (via MCP) | ✅ | Project `yltcmogqavtwvxvxmqxq` — align `.env` + `mcp.json` |
+| Configure `.env` (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) | ⬜ | Must match MCP project |
 | Verify `GET /health` → `supabase_configured: true` | ⬜ | |
+| Seed `demo-user-1` | ✅ | 1 row in `students` |
 | `POST /copilot/students/upsert` | ✅ | `student_service.py` |
 | `POST /copilot/documents/ingest-text` | ✅ | `document_service.py` |
-| Seed `demo-user-1` for local demo | ⬜ | `supabase/seed.sql` |
+| Seed `demo-user-1` for local demo | ✅ | `supabase/seed.sql` |
 | Integration tests for upsert + ingest | ⬜ | `tests/` |
 | `agent_action_logs` on Copilot calls | ⬜ | middleware or service helper |
 
