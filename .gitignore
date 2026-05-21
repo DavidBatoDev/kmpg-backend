@@ -1,6 +1,9 @@
 .venv/
 __pycache__/
 .env
+.cursor/mcp.json
+.agents/
+skills-lock.json
 .pytest_cache/
 *.pyc
 .DS_Store
