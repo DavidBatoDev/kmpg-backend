@@ -1,0 +1,186 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.academic_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  course_id uuid,
+  document_id uuid,
+  type text NOT NULL CHECK (type = ANY (ARRAY['assignment'::text, 'exam'::text, 'quiz'::text, 'project'::text, 'reading'::text, 'presentation'::text, 'lab'::text, 'other'::text])),
+  title text NOT NULL,
+  description text,
+  due_date timestamp with time zone,
+  due_date_confidence numeric NOT NULL DEFAULT 0 CHECK (due_date_confidence >= 0::numeric AND due_date_confidence <= 1::numeric),
+  weight numeric CHECK (weight IS NULL OR weight >= 0::numeric),
+  estimated_hours numeric CHECK (estimated_hours IS NULL OR estimated_hours >= 0::numeric),
+  confidence_score numeric NOT NULL DEFAULT 0 CHECK (confidence_score >= 0::numeric AND confidence_score <= 1::numeric),
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'in_progress'::text, 'completed'::text, 'cancelled'::text])),
+  needs_confirmation boolean NOT NULL DEFAULT false,
+  source_quote text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT academic_items_pkey PRIMARY KEY (id),
+  CONSTRAINT academic_items_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id),
+  CONSTRAINT academic_items_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id),
+  CONSTRAINT academic_items_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+);
+CREATE TABLE public.agent_action_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid,
+  copilot_user_id text,
+  action_name text NOT NULL,
+  request_payload jsonb,
+  response_payload jsonb,
+  status text NOT NULL DEFAULT 'success'::text CHECK (status = ANY (ARRAY['success'::text, 'error'::text])),
+  error_message text,
+  duration_ms integer,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT agent_action_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT agent_action_logs_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.calendar_busy_blocks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  provider text NOT NULL DEFAULT 'google'::text CHECK (provider = ANY (ARRAY['google'::text, 'outlook'::text])),
+  external_event_id text,
+  title text,
+  start_time timestamp with time zone NOT NULL,
+  end_time timestamp with time zone NOT NULL,
+  is_all_day boolean NOT NULL DEFAULT false,
+  source text NOT NULL DEFAULT 'google_calendar'::text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT calendar_busy_blocks_pkey PRIMARY KEY (id),
+  CONSTRAINT calendar_busy_blocks_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.calendar_connections (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  provider text NOT NULL DEFAULT 'google'::text CHECK (provider = ANY (ARRAY['google'::text, 'outlook'::text])),
+  calendar_id text NOT NULL DEFAULT 'primary'::text,
+  encrypted_access_token text,
+  encrypted_refresh_token text,
+  token_expiry timestamp with time zone,
+  scopes ARRAY NOT NULL DEFAULT ARRAY['https://www.googleapis.com/auth/calendar'::text],
+  connection_status text NOT NULL DEFAULT 'active'::text CHECK (connection_status = ANY (ARRAY['active'::text, 'revoked'::text, 'expired'::text, 'error'::text])),
+  last_busy_sync_at timestamp with time zone,
+  error_message text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT calendar_connections_pkey PRIMARY KEY (id),
+  CONSTRAINT calendar_connections_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.courses (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  course_code text,
+  course_name text NOT NULL,
+  term text,
+  instructor text,
+  difficulty_level integer NOT NULL DEFAULT 3 CHECK (difficulty_level >= 1 AND difficulty_level <= 5),
+  color_label text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT courses_pkey PRIMARY KEY (id),
+  CONSTRAINT courses_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.document_chunks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  document_id uuid NOT NULL,
+  student_id uuid NOT NULL,
+  course_id uuid,
+  chunk_index integer NOT NULL DEFAULT 0,
+  chunk_text text NOT NULL,
+  token_count integer,
+  page_number integer,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  embedding USER-DEFINED,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT document_chunks_pkey PRIMARY KEY (id),
+  CONSTRAINT document_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT document_chunks_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id),
+  CONSTRAINT document_chunks_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
+);
+CREATE TABLE public.documents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  course_id uuid,
+  storage_bucket text DEFAULT 'academic-documents'::text,
+  storage_path text,
+  file_name text,
+  file_type text,
+  source_text text,
+  processing_status text NOT NULL DEFAULT 'pending'::text CHECK (processing_status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'failed'::text])),
+  extraction_status text NOT NULL DEFAULT 'not_started'::text CHECK (extraction_status = ANY (ARRAY['not_started'::text, 'processing'::text, 'completed'::text, 'failed'::text])),
+  error_message text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT documents_pkey PRIMARY KEY (id),
+  CONSTRAINT documents_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id),
+  CONSTRAINT documents_course_id_fkey FOREIGN KEY (course_id) REFERENCES public.courses(id)
+);
+CREATE TABLE public.oauth_states (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  provider text NOT NULL DEFAULT 'google'::text CHECK (provider = ANY (ARRAY['google'::text, 'outlook'::text])),
+  state text NOT NULL UNIQUE,
+  redirect_after_connect text,
+  expires_at timestamp with time zone NOT NULL,
+  used_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT oauth_states_pkey PRIMARY KEY (id),
+  CONSTRAINT oauth_states_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.students (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  copilot_user_id text NOT NULL UNIQUE,
+  name text,
+  email text,
+  timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
+  preferred_study_style text,
+  preferred_study_times jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT students_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.study_blocks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  study_plan_id uuid NOT NULL,
+  student_id uuid NOT NULL,
+  academic_item_id uuid,
+  title text NOT NULL,
+  description text,
+  start_time timestamp with time zone NOT NULL,
+  end_time timestamp with time zone NOT NULL,
+  duration_minutes integer DEFAULT GREATEST(0, (floor((EXTRACT(epoch FROM (end_time - start_time)) / (60)::numeric)))::integer),
+  status text NOT NULL DEFAULT 'proposed'::text CHECK (status = ANY (ARRAY['proposed'::text, 'approved'::text, 'scheduled'::text, 'completed'::text, 'missed'::text, 'cancelled'::text, 'rescheduled'::text])),
+  google_calendar_event_id text,
+  calendar_html_link text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT study_blocks_pkey PRIMARY KEY (id),
+  CONSTRAINT study_blocks_study_plan_id_fkey FOREIGN KEY (study_plan_id) REFERENCES public.study_plans(id),
+  CONSTRAINT study_blocks_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id),
+  CONSTRAINT study_blocks_academic_item_id_fkey FOREIGN KEY (academic_item_id) REFERENCES public.academic_items(id)
+);
+CREATE TABLE public.study_plans (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  student_id uuid NOT NULL,
+  status text NOT NULL DEFAULT 'draft'::text CHECK (status = ANY (ARRAY['draft'::text, 'approved'::text, 'scheduled'::text, 'completed'::text, 'cancelled'::text])),
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  goal text,
+  summary text,
+  reasoning text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT study_plans_pkey PRIMARY KEY (id),
+  CONSTRAINT study_plans_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
