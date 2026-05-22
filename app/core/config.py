@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
+    outlook_client_id: str = ""
+    outlook_client_secret: str = ""
+    outlook_redirect_uri: str = "http://localhost:8000/calendar/oauth/callback"
 
     token_encryption_key: str = ""
 

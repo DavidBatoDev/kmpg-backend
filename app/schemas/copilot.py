@@ -83,9 +83,11 @@ class StudyBlockStatusRequest(BaseModel):
 class CreateCalendarEventsRequest(BaseModel):
     copilot_user_id: str
     study_plan_id: str
+    provider: str = "google"
 
 
 class SyncBusyRequest(BaseModel):
     copilot_user_id: str
     start_date: date
     end_date: date
+    provider: str = "google"
